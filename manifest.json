@@ -12,6 +12,17 @@
       "filename": "providers/animev1.js",
       "enabled": true,
       "contentLanguage": ["es"]
+    },
+    {
+      "id": "jkanime",
+      "name": "JKAnime",
+      "description": "Animes subtitulados en español desde JKAnime. Soporta servidores como Streamwish, VOE, Vidhide, etc.",
+      "version": "1.0.0",
+      "author": "Antigravity",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/jkanime.js",
+      "enabled": true,
+      "contentLanguage": ["es"]
     }
   ]
 }

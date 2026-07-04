@@ -311,8 +311,8 @@ async function resolveStreamWish(url) {
     let res = await fetch(targetUrl, {
       headers: {
         "User-Agent": USER_AGENT,
-        "Referer": "https://embed69.org/",
-        "Origin": "https://embed69.org",
+        "Referer": "https://jkanime.net/",
+        "Origin": "https://jkanime.net",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
       },
       redirect: "follow"
@@ -370,6 +370,73 @@ async function resolveStreamWish(url) {
     console.log(`[StreamWish] Error: ${err.message}`);
     return null;
   }
+}
+
+// Desu native player resolver
+async function resolveDesu(url, referer) {
+  try {
+    console.log(`[Desu] Resolviendo: ${url}`);
+    const res = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT, Referer: referer }
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    
+    // 1. Check for base64 encoded URL in atob('...')
+    const atobMatch = html.match(/atob\(['"]([^'"]+)['"]\)/);
+    if (atobMatch) {
+      const decodedUrl = decodeBase64(atobMatch[1])?.trim();
+      if (decodedUrl && decodedUrl.startsWith("http")) {
+        console.log(`[Desu] URL encontrada (atob): ${decodedUrl.substring(0, 80)}...`);
+        return {
+          url: decodedUrl,
+          quality: determineQuality(decodedUrl),
+          headers: { "User-Agent": USER_AGENT, Referer: url }
+        };
+      }
+    }
+    
+    // 2. Check for loadSource('...')
+    const hlsMatch = html.match(/hls\.loadSource\(\s*['"]([^'"]+)['"]/);
+    if (hlsMatch) {
+      const videoUrl = hlsMatch[1];
+      console.log(`[Desu] URL encontrada (loadSource): ${videoUrl.substring(0, 80)}...`);
+      return {
+        url: videoUrl,
+        quality: determineQuality(videoUrl),
+        headers: { "User-Agent": USER_AGENT, Referer: url }
+      };
+    }
+  } catch (err) {
+    console.log(`[Desu] Error al resolver: ${err.message}`);
+  }
+  return null;
+}
+
+// Magi native player resolver
+async function resolveMagi(url, referer) {
+  try {
+    console.log(`[Magi] Resolviendo: ${url}`);
+    const res = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT, Referer: referer }
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    
+    const sourceMatch = html.match(/<source\s+src=['"]([^'"]+)['"]/i);
+    if (sourceMatch) {
+      const videoUrl = sourceMatch[1];
+      console.log(`[Magi] URL encontrada: ${videoUrl.substring(0, 80)}...`);
+      return {
+        url: videoUrl,
+        quality: determineQuality(videoUrl),
+        headers: { "User-Agent": USER_AGENT, Referer: url }
+      };
+    }
+  } catch (err) {
+    console.log(`[Magi] Error al resolver: ${err.message}`);
+  }
+  return null;
 }
 
 function parseSearchHtml(html) {
@@ -522,55 +589,85 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     return [];
   }
   
-  const serversRegex = /var\s+servers\s*=\s*(\[[\s\S]*?\]);/;
-  const serversMatch = epHtml.match(serversRegex);
-  if (!serversMatch) {
-    console.log("[JKAnime] No se encontró el arreglo de servidores (var servers = ...)");
-    return [];
-  }
-  
-  let serversArray = [];
-  try {
-    serversArray = JSON.parse(serversMatch[1]);
-  } catch (err) {
-    console.log(`[JKAnime] Error al parsear servidores: ${err.message}`);
-    return [];
-  }
-  
-  console.log(`[JKAnime] Encontrados ${serversArray.length} servidores en el arreglo`);
-  
   let streams = [];
-  for (let srv of serversArray) {
-    if (!srv.remote || !srv.server) continue;
-    const realUrl = decodeBase64(srv.remote)?.trim();
-    if (!realUrl) continue;
-    
-    const srvName = srv.server.toLowerCase();
-    
-    if (srvName === 'voe' && realUrl.includes('voe.sx/e/')) {
-      const resolved = await resolveVoe(realUrl);
+  
+  // 1. Resolve Desu and Magi from native video variables (video[0], video[1])
+  const iframeRegex = /video\[\d+\]\s*=\s*['"]<iframe[^>]*src=["']([^"']+)["']/g;
+  let iframeMatch;
+  const nativeIframeUrls = [];
+  while ((iframeMatch = iframeRegex.exec(epHtml)) !== null) {
+    nativeIframeUrls.push(iframeMatch[1]);
+  }
+  
+  console.log(`[JKAnime] Encontrados ${nativeIframeUrls.length} reproductores nativos (Desu/Magi)`);
+  for (let iframeUrl of nativeIframeUrls) {
+    if (iframeUrl.includes('/jkplayer/um?e=')) {
+      const resolved = await resolveDesu(iframeUrl, epUrl);
       if (resolved) {
         streams.push({
           name: "JKAnime",
-          title: `${resolved.quality} · VOE`,
+          title: `${resolved.quality} · Desu`,
           url: resolved.url,
-          quality: `${resolved.quality} - VOE`,
+          quality: `${resolved.quality} - Desu`,
           headers: resolved.headers
         });
       }
-    } else if (
-      (srvName === 'streamwish' || srvName === 'filemoon' || srvName === 'vidhide') &&
-      (realUrl.includes('hlswish') || realUrl.includes('streamwish') || realUrl.includes('strwish') || realUrl.includes('vibuxer') || realUrl.includes('bysekoze.com') || realUrl.includes('vidhide'))
-    ) {
-      const resolved = await resolveStreamWish(realUrl);
+    } else if (iframeUrl.includes('/jkplayer/umv?e=')) {
+      const resolved = await resolveMagi(iframeUrl, epUrl);
       if (resolved) {
         streams.push({
           name: "JKAnime",
-          title: `${resolved.quality} · ${srv.server}`,
+          title: `${resolved.quality} · Magi`,
           url: resolved.url,
-          quality: `${resolved.quality} - ${srv.server}`,
+          quality: `${resolved.quality} - Magi`,
           headers: resolved.headers
         });
+      }
+    }
+  }
+  
+  // 2. Resolve general servers array (Streamwish, VOE, Vidhide, etc.)
+  const serversRegex = /var\s+servers\s*=\s*(\[[\s\S]*?\]);/;
+  const serversMatch = epHtml.match(serversRegex);
+  if (serversMatch) {
+    let serversArray = [];
+    try {
+      serversArray = JSON.parse(serversMatch[1]);
+    } catch (err) {
+      console.log(`[JKAnime] Error al parsear servidores: ${err.message}`);
+    }
+    
+    console.log(`[JKAnime] Encontrados ${serversArray.length} servidores en el arreglo general`);
+    for (let srv of serversArray) {
+      if (!srv.remote || !srv.server) continue;
+      const realUrl = decodeBase64(srv.remote)?.trim();
+      if (!realUrl) continue;
+      
+      const srvName = srv.server.toLowerCase();
+      console.log(`[JKAnime] Procesando servidor: ${srv.server} -> ${realUrl}`);
+      
+      if (srvName === 'voe') {
+        const resolved = await resolveVoe(realUrl);
+        if (resolved) {
+          streams.push({
+            name: "JKAnime",
+            title: `${resolved.quality} · VOE`,
+            url: resolved.url,
+            quality: `${resolved.quality} - VOE`,
+            headers: resolved.headers
+          });
+        }
+      } else if (srvName === 'streamwish' || srvName === 'vidhide') {
+        const resolved = await resolveStreamWish(realUrl);
+        if (resolved) {
+          streams.push({
+            name: "JKAnime",
+            title: `${resolved.quality} · ${srv.server}`,
+            url: resolved.url,
+            quality: `${resolved.quality} - ${srv.server}`,
+            headers: resolved.headers
+          });
+        }
       }
     }
   }
